@@ -4,249 +4,211 @@ import { RGBELoader } from '../libs/three/jsm/RGBELoader.js';
 import { ARButton } from '../libs/ARButton.js';
 import { LoadingBar } from '../libs/LoadingBar.js';
 
-class App {
-    constructor() {
-        const container = document.createElement('div');
-        document.body.appendChild(container);
+const assetsPath = '../webxr-online/assets/ar-shop/';
+const hdrPath = '../webxr-online/assets/hdr/venice_sunset_1k.hdr';
+const reticlePath = 'https://immersive-web.github.io/webxr-samples/media/gltf/reticle/reticle.gltf';
 
-        this.loadingBar = new LoadingBar();
-        this.loadingBar.visible = false;
+const initScene = () => {
+    const scene = new THREE.Scene();
+    const ambient = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+    ambient.position.set(0.5, 1, 0.25);
+    scene.add(ambient);
+    return scene;
+};
 
-        this.assetsPath = '../Ar_onlineshop/assets/ar-shop/';
+const initCamera = () => {
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+    camera.position.set(0, 1.6, 0);
+    return camera;
+};
 
-        this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-        this.camera.position.set(0, 1.6, 0);
+const initRenderer = (container) => {
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    container.appendChild(renderer.domElement);
+    return renderer;
+};
 
-        this.scene = new THREE.Scene();
+const setEnvironment = async (renderer, scene) => {
+    const loader = new RGBELoader().setDataType(THREE.UnsignedByteType);
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    pmremGenerator.compileEquirectangularShader();
 
-        const ambient = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-        ambient.position.set(0.5, 1, 0.25);
-        this.scene.add(ambient);
-
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        this.renderer.setPixelRatio(window.devicePixelRatio);
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.outputEncoding = THREE.sRGBEncoding;
-        container.appendChild(this.renderer.domElement);
-        this.setEnvironment();
-
-        this.reticle = new THREE.Mesh(
-            new THREE.RingBufferGeometry(0.15, 0.2, 32).rotateX(- Math.PI / 2),
-            new THREE.MeshBasicMaterial()
-        );
-
-        this.reticle.matrixAutoUpdate = false;
-        this.reticle.visible = false;
-        this.scene.add(this.reticle);
-
-        this.setupXR();
-
-        window.addEventListener('resize', this.resize.bind(this));
-
+    try {
+        const texture = await loader.loadAsync(hdrPath);
+        const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+        pmremGenerator.dispose();
+        scene.environment = envMap;
+    } catch (err) {
+        console.error('An error occurred setting the environment', err);
     }
+};
 
-    setupXR() {
-        this.renderer.xr.enabled = true;
+const loadReticle = async (scene) => {
+    const loader = new GLTFLoader();
+    try {
+        const gltf = await loader.loadAsync(reticlePath);
+        const reticle = gltf.scene;
+        reticle.visible = false;
+        scene.add(reticle);
+        return reticle;
+    } catch (err) {
+        console.error('An error occurred loading the reticle', err);
+    }
+};
 
-        if ('xr' in navigator) {
+const setupXR = (renderer, scene, reticle) => {
+    renderer.xr.enabled = true;
 
-            navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
-
-                if (supported) {
-                    const collection = document.getElementsByClassName("ar-button");
-                    [...collection].forEach(el => {
-                        el.style.display = 'block';
-                    });
-                }
-            });
-
-        }
-
-        const self = this;
-
-        this.hitTestSourceRequested = false;
-        this.hitTestSource = null;
-
-        function onSelect() {
-            if (self.chair === undefined) return;
-
-            if (self.reticle.visible) {
-                self.chair.position.setFromMatrixPosition(self.reticle.matrix);
-                self.chair.visible = true;
+    if ('xr' in navigator) {
+        navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+            if (supported) {
+                document.querySelectorAll('.ar-button').forEach(el => {
+                    el.style.display = 'block';
+                });
             }
-        }
-
-        this.controller = this.renderer.xr.getController(0);
-        this.controller.addEventListener('select', onSelect);
-
-        this.scene.add(this.controller);
-    }
-
-    resize() {
-        this.camera.aspect = window.innerWidth / window.innerHeight;
-        this.camera.updateProjectionMatrix();
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-    }
-
-    setEnvironment() {
-        const loader = new RGBELoader().setDataType(THREE.UnsignedByteType);
-        const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
-        pmremGenerator.compileEquirectangularShader();
-
-        const self = this;
-
-        loader.load('../Ar_onlineshop/assets/hdr/venice_sunset_1k.hdr', (texture) => {
-            const envMap = pmremGenerator.fromEquirectangular(texture).texture;
-            pmremGenerator.dispose();
-
-            self.scene.environment = envMap;
-
-        }, undefined, (err) => {
-            console.error('An error occurred setting the environment');
         });
     }
 
-    showChair(id) {
-        this.initAR();
+    let hitTestSourceRequested = false;
+    let hitTestSource = null;
+    let chair = null;
 
-        const loader = new GLTFLoader().setPath(this.assetsPath);
-        const self = this;
-
-        this.loadingBar.visible = true;
-
-        // Load a glTF resource
-        loader.load(
-            // resource URL
-            `chair${id}.glb`,
-            // called when the resource is loaded
-            function (gltf) {
-
-                self.scene.add(gltf.scene);
-                self.chair = gltf.scene;
-
-                self.chair.visible = false;
-
-                self.loadingBar.visible = false;
-
-                self.renderer.setAnimationLoop(self.render.bind(self));
-            },
-            // called while loading is progressing
-            function (xhr) {
-
-                self.loadingBar.progress = (xhr.loaded / xhr.total);
-
-            },
-            // called when loading has errors
-            function (error) {
-
-                console.log('An error happened');
-
-            }
-        );
-    }
-
-    initAR() {
-        let currentSession = null;
-        const self = this;
-
-        const sessionInit = { requiredFeatures: ['hit-test'] };
-
-
-        function onSessionStarted(session) {
-
-            session.addEventListener('end', onSessionEnded);
-
-            self.renderer.xr.setReferenceSpaceType('local');
-            self.renderer.xr.setSession(session);
-
-            currentSession = session;
-
+    const onSelect = () => {
+        if (chair && reticle.visible) {
+            chair.position.setFromMatrixPosition(reticle.matrix);
+            chair.visible = true;
         }
+    };
 
-        function onSessionEnded() {
+    const controller = renderer.xr.getController(0);
+    controller.addEventListener('select', onSelect);
+    scene.add(controller);
 
-            currentSession.removeEventListener('end', onSessionEnded);
+    const requestHitTestSource = async () => {
+        const session = renderer.xr.getSession();
+        const referenceSpace = await session.requestReferenceSpace('viewer');
+        hitTestSource = await session.requestHitTestSource({ space: referenceSpace });
 
-            currentSession = null;
-
-            if (self.chair !== null) {
-                self.scene.remove(self.chair);
-                self.chair = null;
-            }
-
-            self.renderer.setAnimationLoop(null);
-
-        }
-
-        if (currentSession === null) {
-
-            navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
-
-        } else {
-
-            currentSession.end();
-
-        }
-    }
-
-    requestHitTestSource() {
-        const self = this;
-
-        const session = this.renderer.xr.getSession();
-
-        session.requestReferenceSpace('viewer').then(function (referenceSpace) {
-
-            session.requestHitTestSource({ space: referenceSpace }).then(function (source) {
-
-                self.hitTestSource = source;
-
-            });
-
+        session.addEventListener('end', () => {
+            hitTestSourceRequested = false;
+            hitTestSource = null;
         });
 
-        session.addEventListener('end', function () {
+        hitTestSourceRequested = true;
+    };
 
-            self.hitTestSourceRequested = false;
-            self.hitTestSource = null;
-            self.referenceSpace = null;
+    const getHitTestResults = (frame) => {
+        if (!hitTestSource) return;
 
-        });
-
-        this.hitTestSourceRequested = true;
-
-    }
-
-    getHitTestResults(frame) {
-        const hitTestResults = frame.getHitTestResults(this.hitTestSource);
-
+        const hitTestResults = frame.getHitTestResults(hitTestSource);
         if (hitTestResults.length) {
+            const referenceSpace = renderer.xr.getReferenceSpace();
+            const pose = hitTestResults[0].getPose(referenceSpace);
 
-            const referenceSpace = this.renderer.xr.getReferenceSpace();
-            const hit = hitTestResults[0];
-            const pose = hit.getPose(referenceSpace);
-
-            this.reticle.visible = true;
-            this.reticle.matrix.fromArray(pose.transform.matrix);
-
+            reticle.visible = true;
+            reticle.matrix.fromArray(pose.transform.matrix);
         } else {
-
-            this.reticle.visible = false;
-
+            reticle.visible = false;
         }
+    };
 
-    }
-
-    render(timestamp, frame) {
+    const render = (timestamp, frame) => {
+        if (frame && !hitTestSourceRequested) {
+            requestHitTestSource();
+        }
 
         if (frame) {
-            if (this.hitTestSourceRequested === false) this.requestHitTestSource()
-
-            if (this.hitTestSource) this.getHitTestResults(frame);
+            getHitTestResults(frame);
         }
 
-        this.renderer.render(this.scene, this.camera);
+        renderer.render(scene, camera);
+    };
 
+    return { render, setChair: (newChair) => chair = newChair };
+};
+
+const loadChair = async (scene, id) => {
+    const loader = new GLTFLoader().setPath(assetsPath);
+    const loadingBar = new LoadingBar();
+    loadingBar.visible = true;
+
+    try {
+        const gltf = await loader.loadAsync(`chair${id}.glb`);
+        const chair = gltf.scene;
+        chair.visible = false;
+        scene.add(chair);
+        loadingBar.visible = false;
+        return chair;
+    } catch (err) {
+        console.error('An error occurred loading the chair', err);
     }
-}
+};
 
-export { App };
+const initAR = async (renderer, scene, chair, reticle) => {
+    let currentSession = null;
+
+    const sessionInit = { requiredFeatures: ['hit-test'] };
+
+    const onSessionStarted = (session) => {
+        session.addEventListener('end', onSessionEnded);
+
+        renderer.xr.setReferenceSpaceType('local');
+        renderer.xr.setSession(session);
+
+        currentSession = session;
+    };
+
+    const onSessionEnded = () => {
+        if (currentSession) {
+            currentSession.removeEventListener('end', onSessionEnded);
+            currentSession = null;
+
+            if (chair) {
+                scene.remove(chair);
+                chair = null;
+            }
+
+            renderer.setAnimationLoop(null);
+        }
+    };
+
+    if (currentSession === null) {
+        const session = await navigator.xr.requestSession('immersive-ar', sessionInit);
+        onSessionStarted(session);
+    } else {
+        currentSession.end();
+    }
+};
+
+const initApp = async () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+
+    const scene = initScene();
+    const camera = initCamera();
+    const renderer = initRenderer(container);
+
+    await setEnvironment(renderer, scene);
+    const reticle = await loadReticle(scene);
+    const { render, setChair } = setupXR(renderer, scene, reticle);
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    document.querySelectorAll('.ar-button').forEach(el => {
+        el.addEventListener('click', async () => {
+            const chair = await loadChair(scene, 1); // Replace '1' with the desired chair ID
+            setChair(chair);
+            initAR(renderer, scene, chair, reticle);
+            renderer.setAnimationLoop(render);
+        });
+    });
+};
+
+initApp();
