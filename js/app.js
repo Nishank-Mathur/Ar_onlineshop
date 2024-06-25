@@ -1,7 +1,6 @@
 import * as THREE from '../libs/three125/three.module.js';
 import { GLTFLoader } from '../libs/three/jsm/GLTFLoader.js';
 import { RGBELoader } from '../libs/three/jsm/RGBELoader.js';
-import { ARButton } from '../libs/ARButton.js';
 import { LoadingBar } from '../libs/LoadingBar.js';
 
 const assetsPath = '../webxr-online/assets/ar-shop/';
@@ -203,7 +202,8 @@ const initApp = async () => {
 
     document.querySelectorAll('.ar-button').forEach(el => {
         el.addEventListener('click', async () => {
-            const chair = await loadChair(scene, 1); // Replace '1' with the desired chair ID
+            const chairId = el.dataset.chairId;
+            const chair = await loadChair(scene, chairId);
             setChair(chair);
             initAR(renderer, scene, chair, reticle);
             renderer.setAnimationLoop(render);
